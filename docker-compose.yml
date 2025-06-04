@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  netflix-clone-app:
+    build:
+      context: .
+      dockerfile: Dockerfile # Explicitly state the Dockerfile name
+      args:
+        # This TMDB_V3_API_KEY will be passed to the ARG in your Dockerfile
+        TMDB_V3_API_KEY: ${TMDB_V3_API_KEY_FROM_ENV}
+    image: aayush786-21/netflix-clone-app-staging # Give it a descriptive name
+    ports:
+      - "8081:80" # Map host port 8081 to container port 80
+    restart: unless-stopped
+    container_name: netflix-clone-dev-staging
