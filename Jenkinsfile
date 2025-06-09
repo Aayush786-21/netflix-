@@ -71,6 +71,29 @@ pipeline {
         }
     }
 
+        stage('Deploy to Kind Kubernetes') {
+            steps {
+                script {
+                    
+                    withCredentials([file(credentialsId: 'kind-netflix-cluster-kubeconfig', variable: 'KUBECONFIG_PATH')]) {
+                        // Apply the deployment and service
+                        sh 'kubectl --kubeconfig $KUBECONFIG_PATH apply -f k8s/netflix-clone-deployment.yaml'
+                        
+                        // Wait a bit for deployment to rollout (optional, but good for demo)
+                        sh 'sleep 10' 
+                        
+                        // Check status
+                        sh 'kubectl --kubeconfig $KUBECONFIG_PATH get deployments -l app=netflix-clone'
+                        sh 'kubectl --kubeconfig $KUBECONFIG_PATH get pods -l app=netflix-clone'
+                        sh 'kubectl --kubeconfig $KUBECONFIG_PATH get svc netflix-clone-svc'
+
+                        // You might want to add rollout status check for a more robust pipeline
+                        // sh 'kubectl --kubeconfig $KUBECONFIG_PATH rollout status deployment/netflix-clone --timeout=2m'
+                    }
+                }
+            }
+        }
+
     post {
         always {
             echo 'Pipeline finished.'
