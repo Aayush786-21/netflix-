@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netflix-clone
+  labels:
+    app: netflix-clone
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netflix-clone
+  template:
+    metadata:
+      labels:
+        app: netflix-clone
+    spec:
+      containers:
+      - name: netflix-clone-app
+        image: aayush786/netflix-clone:latest 
+        ports:
+        - containerPort: 80 # The port Nginx listens on inside the container
+        env:
+        - name: VITE_APP_TMDB_V3_API_KEY # This is the env var name INSIDE your container.
+                                        # Your app code (JS) needs to look for this exact name if it uses runtime env vars.
+                                        # If Vite baked in VITE_TMDB_V3_API_KEY (without _APP_) during build,
+                                        # then this runtime env var might not be used by the static files,
+                                        # but it's good to be consistent with the secret.
+          valueFrom:
+            secretKeyRef:
+              name: netflix-clone-secret     # This MUST match the name of the K8s Secret you created.
+              key: VITE_APP_TMDB_V3_API_KEY  # This MUST match the key within that K8s Secret.
+        resources: # Optional: define resource requests and limits
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: netflix-clone-svc
+  labels:
+    app: netflix-clone
+spec:
+  selector:
+    app: netflix-clone # This must match the labels on your Pods (template.metadata.labels)
+  ports:
+  - protocol: TCP
+    port: 80       # Service's port within the cluster (how other pods reach it)
+    targetPort: 80 # Port on your container (containerPort)
+  type: NodePort    # Exposes the service on each Kind node's IP at a high port.
+                    
