@@ -1,50 +1,46 @@
-// Jenkinsfile
 pipeline {
-    agent any // Runs on any available Jenkins agent (our jenkins VM)
+    agent any // Runs on any available Jenkins agent (e.g., your 'jenkins' VM)
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-credentials') // Jenkins credential ID for Docker Hub
-        DOCKER_IMAGE_NAME = "aayush786/netflix-clone" 
+        DOCKER_IMAGE_NAME        = "aayush786/netflix-clone" // YOUR_DOCKERHUB_USERNAME/IMAGE_NAME
+        K8S_DEPLOYMENT_FILE      = "k8s/netflix-clone-deployment.yaml"
+        K8S_NAMESPACE            = "default" // Namespace where you deploy and where the secret is
+        APP_LABEL                = "app=netflix-clone" // Label to select your app's pods/services
+        DEPLOYMENT_NAME          = "netflix-clone"
     }
 
     parameters {
-        string(name: 'TMDB_V3_API_KEY', defaultValue: '', description: 'TMDB v3 API Key required for the build. Get from themoviedb.org.')
+        string(name: 'TMDB_V3_API_KEY', defaultValue: '', description: 'TMDB v3 API Key required for the Docker build')
     }
 
     stages {
-        stage('Checkout') {
+        stage('Cleanup Workspace') {
             steps {
-                echo "Checking out staging branch from ${env.GIT_URL}"
-                // GIT_BRANCH is automatically set to 'staging' due to job config
-                // GIT_URL is automatically set from job config
-                checkout scm
+                cleanWs() // Clean the workspace before starting
             }
         }
 
-        stage('Validate Parameters') {
+        stage('Checkout Code') {
             steps {
-                script {
-                    if (params.TMDB_V3_API_KEY == null || params.TMDB_V3_API_KEY.trim().isEmpty()) {
-                        error "TMDB_V3_API_KEY parameter is required and cannot be empty."
-                    }
-                }
+                git branch: 'staging', url: 'https://github.com/Aayush786-21/netflix-.git' // Replace with YOUR Git repository URL
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                echo "Building Docker image ${DOCKER_IMAGE_NAME}..."
-                // The Dockerfile uses ARG TMDB_V3_API_KEY
-                // It then sets ENV VITE_APP_TMDB_V3_API_KEY=${TMDB_V3_API_KEY}
-                sh "docker build --build-arg TMDB_V3_API_KEY=\"${params.TMDB_V3_API_KEY}\" -t ${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER} -t ${DOCKER_IMAGE_NAME}:latest ."
+                script {
+                    if (params.TMDB_V3_API_KEY == null || params.TMDB_V3_API_KEY.trim().isEmpty()) {
+                        error "TMDB_V3_API_KEY parameter is required and cannot be empty for the Docker build."
+                    }
+                    // The Dockerfile uses ARG TMDB_V3_API_KEY and ENV VITE_TMDB_V3_API_KEY=$TMDB_V3_API_KEY
+                    // So the key is baked into the image by Vite during the npm run build step.
+                    sh "docker build --build-arg TMDB_V3_API_KEY=${params.TMDB_V3_API_KEY} -t ${env.DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER} -t ${env.DOCKER_IMAGE_NAME}:latest ."
+                }
             }
         }
 
         stage('Login to Docker Hub') {
             steps {
-                echo "Logging into Docker Hub..."
-                // DOCKERHUB_CREDENTIALS_USR and DOCKERHUB_CREDENTIALS_PSW are automatically provided
-                // by withCredentials when 'dockerhub-credentials' is a Username/Password credential.
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
                 }
@@ -53,60 +49,60 @@ pipeline {
 
         stage('Push Docker Image to Docker Hub') {
             steps {
-                echo "Pushing ${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER} to Docker Hub..."
-                sh "docker push ${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}"
-                
-                echo "Pushing ${DOCKER_IMAGE_NAME}:latest to Docker Hub..."
-                sh "docker push ${DOCKER_IMAGE_NAME}:latest"
+                sh "docker push ${env.DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER}"
+                sh "docker push ${env.DOCKER_IMAGE_NAME}:latest"
             }
         }
-
-        stage('Cleanup Docker Image (local agent)') {
-            // Optional: clean up the built image from the Jenkins agent
-            steps {
-                echo "Cleaning up local Docker images on agent..."
-                sh "docker rmi ${DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER} || true"
-                sh "docker rmi ${DOCKER_IMAGE_NAME}:latest || true"
-            }
-        }
-    }
 
         stage('Deploy to Kind Kubernetes') {
             steps {
                 script {
-                    
                     withCredentials([file(credentialsId: 'kind-netflix-cluster-kubeconfig', variable: 'KUBECONFIG_PATH')]) {
-                        // Apply the deployment and service
-                        sh 'kubectl --kubeconfig $KUBECONFIG_PATH apply -f k8s/netflix-clone-deployment.yaml'
+                        echo "Applying Kubernetes manifests from ${env.K8S_DEPLOYMENT_FILE}..."
+                        sh "kubectl --kubeconfig $KUBECONFIG_PATH apply -f ${env.K8S_DEPLOYMENT_FILE} -n ${env.K8S_NAMESPACE}"
                         
-                        // Wait a bit for deployment to rollout (optional, but good for demo)
-                        sh 'sleep 10' 
+                        echo "Waiting for deployment rollout..."
+                        // Timeout after 3 minutes (180s) for the rollout
+                        sh "kubectl --kubeconfig $KUBECONFIG_PATH rollout status deployment/${env.DEPLOYMENT_NAME} -n ${env.K8S_NAMESPACE} --timeout=180s"
                         
-                        // Check status
-                        sh 'kubectl --kubeconfig $KUBECONFIG_PATH get deployments -l app=netflix-clone'
-                        sh 'kubectl --kubeconfig $KUBECONFIG_PATH get pods -l app=netflix-clone'
-                        sh 'kubectl --kubeconfig $KUBECONFIG_PATH get svc netflix-clone-svc'
-
-                        // You might want to add rollout status check for a more robust pipeline
-                        // sh 'kubectl --kubeconfig $KUBECONFIG_PATH rollout status deployment/netflix-clone --timeout=2m'
+                        echo "Deployment status:"
+                        sh "kubectl --kubeconfig $KUBECONFIG_PATH get deployment ${env.DEPLOYMENT_NAME} -n ${env.K8S_NAMESPACE} -o wide"
+                        
+                        echo "Pod status:"
+                        sh "kubectl --kubeconfig $KUBECONFIG_PATH get pods -n ${env.K8S_NAMESPACE} -l ${env.APP_LABEL} -o wide"
+                        
+                        echo "Service status:"
+                        sh "kubectl --kubeconfig $KUBECONFIG_PATH get svc ${env.DEPLOYMENT_NAME}-svc -n ${env.K8S_NAMESPACE}" // Assuming service name matches deployment name + -svc
                     }
                 }
             }
         }
+    }
 
     post {
         always {
             echo 'Pipeline finished.'
-            echo 'Logging out from Docker Hub...'
-            sh 'docker logout || true' // Logout from Docker Hub, || true to not fail if not logged in
+            // Logout from Docker Hub if logged in
+            sh 'docker logout || true' // Use || true to not fail if not logged in
+
+            // Clean up local Docker images (optional, good for Jenkins agent hygiene)
+            script {
+                try {
+                    sh "docker rmi ${env.DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER} || true"
+                    sh "docker rmi ${env.DOCKER_IMAGE_NAME}:latest || true" // Be careful with rmi latest if other jobs depend on it
+                } catch (err) {
+                    echo "Failed to remove local docker images: ${err}"
+                }
+            }
+            deleteDir() // Clean up workspace again
         }
         success {
-            echo 'Pipeline Succeeded!'
-            // TODO: Add notification or trigger next step (e.g., deployment)
+            echo 'Pipeline succeeded!'
+            // Add any success notifications here (e.g., email, Slack)
         }
         failure {
-            echo 'Pipeline Failed!'
-            // TODO: Add notification
+            echo 'Pipeline failed!'
+            // Add any failure notifications here
         }
     }
 }
