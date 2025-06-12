@@ -1,0 +1,44 @@
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'severity']
+  group_wait: 10s      # Shorter wait for testing
+  group_interval: 1m   # Shorter interval for testing
+  repeat_interval: 3m  # Shorter repeat for testing
+  receiver: 'mailpit-receiver'
+
+receivers:
+- name: 'mailpit-receiver'
+  email_configs:
+  - to: 'test-recipient@example.com' # This can be anything, Mailpit catches all
+    from: 'alertmanager@kind.local'    # This can be anything
+    smarthost: '192.168.107.1:1025' 
+    # Mailpit doesn't require authentication by default
+    # auth_username: ''
+    # auth_password: ''
+    # auth_identity: ''
+    require_tls: false # Mailpit by default doesn't use TLS on port 1025
+    send_resolved: true
+    headers:
+      subject: '[ALERT] {{ .CommonAnnotations.summary }}'
+    html: |
+      {{ define "email.default.html" }}
+      <!DOCTYPE html>
+      <html>
+        <head><title>{{ .CommonAnnotations.summary }}</title></head>
+        <body>
+          <p><b>Alert:</b> {{ .CommonAnnotations.summary }}</p>
+          <p><b>Severity:</b> {{ .CommonLabels.severity }}</p>
+          <p><b>Description:</b> {{ .CommonAnnotations.description }}</p>
+          <p><b>Starts at:</b> {{ .StartsAt.Format "2006-01-02 15:04:05 MST" }}</p>
+          <h4>Details:</h4>
+          <ul>
+            {{ range .Alerts }}
+              <li>Labels: {{ .Labels.SortedPairs | range printf "%s=\"%s\" " }}</li>
+              <li>Annotations: {{ .Annotations.SortedPairs | range printf "%s=\"%s\" " }}</li><br>
+            {{ end }}
+          </ul>
+        </body>
+      </html>
+      {{ end }}

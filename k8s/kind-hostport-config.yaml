@@ -1,0 +1,32 @@
+# k8s/kind-config-with-ingress-ports.yaml (choose a descriptive name)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+  extraPortMappings:
+  # Map host port 80 to the standard HTTP port inside the Kind node container
+  # The Nginx Ingress service will listen on this port 80 inside the Kind node.
+  - containerPort: 80
+    hostPort: 80       # This will be localhost:80 on your Mac
+    protocol: TCP
+    # listenAddress: "0.0.0.0" # Optional: Use if you need to access from other devices on your network,
+                              # or if 127.0.0.1 gives issues from OrbStack VMs.
+                              # For now, default (127.0.0.1) is fine.
+  # Map host port 443 for HTTPS
+  - containerPort: 443
+    hostPort: 443      # This will be localhost:443 on your Mac
+    protocol: TCP
+    # listenAddress: "0.0.0.0" # Optional
+  # You can keep or remove the explicit API server mapping.
+  # Kind usually handles the API server port mapping automatically to a random high port on 127.0.0.1.
+  # If you want a predictable API server port on localhost, you can keep this:
+  # - containerPort: 6443
+  #   hostPort: 6443 # Ensure this port is free on your Mac
+  #   protocol: TCP
+  #   listenAddress: "127.0.0.1"

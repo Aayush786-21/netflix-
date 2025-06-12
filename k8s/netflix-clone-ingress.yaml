@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: netflix-clone-ingress
+  namespace: default 
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: / # Route all traffic from the root path
+        pathType: Prefix # Or ImplementationSpecific or Exact
+        backend:
+          service:
+            name: netflix-clone-svc # Name of your Service
+            port:
+              number: 80 # Port number of your Service

@@ -1,0 +1,40 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: node-alerts
+  namespace: monitoring
+  labels:
+    release: prometheus # Or your actual release label
+spec:
+  groups:
+  - name: node.alerts
+    rules:
+    # Alert for High CPU Load (TESTING - LOW THRESHOLD)
+    - alert: NodeCPUUsageHigh
+      expr: 100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 1 # Changed to > 1% and [1m] rate
+      for: 100s # Changed to 100 seconds
+      labels:
+        severity: warning
+      annotations:
+        summary: "TEST - High CPU usage on node {{ $labels.instance }}"
+        description: "TEST - CPU usage on node {{ $labels.instance }} is {{ $value | printf \"%.2f\" }}% for more than 10 seconds."
+
+    # Alert for High Memory Usage (TESTING - LOW THRESHOLD)
+    - alert: NodeMemoryUsageHigh
+      expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 80 # Changed to > 10%
+      for: 100s # Changed to 100 seconds
+      labels:
+        severity: critical
+      annotations:
+        summary: "TEST - High Memory usage on node {{ $labels.instance }}"
+        description: "TEST - Memory usage on node {{ $labels.instance }} is {{ $value | printf \"%.2f\" }}% for more than 10 seconds."
+
+    # Keep NodeExporterDown as is, or comment out for this test if you prefer
+    - alert: NodeExporterDown
+      expr: up{job="prometheus-prometheus-node-exporter"} == 0
+      for: 2m # Can keep this, or make it shorter like 30s for quicker test if you stop node_exporter
+      labels:
+        severity: critical
+      annotations:
+        summary: "Node Exporter down on {{ $labels.instance }}"
+        description: "Node Exporter on {{ $labels.instance }} has been down for more than 2 minutes."
