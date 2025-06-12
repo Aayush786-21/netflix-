@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
       - name: netflix-clone-app
-        image: aayush786/netflix-clone:latest # YOUR DOCKER HUB IMAGE
+        image: aayush786/netflix-clone:test-amd64 # YOUR DOCKER HUB IMAGE
         ports:
         - containerPort: 80 # Port Nginx listens on inside the container
         env:
