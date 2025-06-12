@@ -1,32 +1,32 @@
 pipeline {
-    agent any
+    agent any // Jenkins agent with git, docker, aws cli, kubectl
 
     environment {
-        DOCKER_IMAGE_NAME        = "aayush786/netflix-clone" // Replace with YOUR Docker Hub Username/ImageName
-        K8S_DEPLOYMENT_FILE      = "k8s/netflix-clone-deployment.yaml" // Path to your K8s manifest in the repo
-        K8S_NAMESPACE            = "default" // Namespace for deployment and where the secret is
-        APP_LABEL                = "app=netflix-clone" // Label to select your app's K8s resources
-        DEPLOYMENT_NAME          = "netflix-clone"     // Name of your K8s Deployment object
-        SERVICE_NAME             = "netflix-clone-svc" // Name of your K8s Service object
+        DOCKER_IMAGE_NAME        = "aayush786/netflix-clone" // YOUR_DOCKERHUB_USERNAME/IMAGE_NAME
+        K8S_DEPLOYMENT_FILE      = "k8s/netflix-clone-deployment.yaml"
+        K8S_INGRESS_FILE         = "k8s/netflix-clone-ingress.yaml"
+        K8S_NAMESPACE            = "default"
+        APP_LABEL                = "app=netflix-clone"
+        DEPLOYMENT_NAME          = "netflix-clone"
+        INGRESS_NAME             = "netflix-clone-ingress" // Match name in your ingress.yaml
+        AWS_REGION               = "us-east-1"
+        EKS_CLUSTER_NAME         = "netflix-eks-cluster"
     }
 
     parameters {
-        string(name: 'TMDB_V3_API_KEY', defaultValue: '', description: 'TMDB v3 API Key required for the Docker build')
+        string(name: 'TMDB_V3_API_KEY', defaultValue: '', description: 'TMDB v3 API Key for Docker build')
     }
 
     stages {
         stage('Cleanup Workspace') {
             steps {
-                cleanWs() // Clean the workspace before starting
+                cleanWs()
             }
         }
 
-        stage('Checkout Code') {
+        stage('Checkout Code (EKS Branch)') {
             steps {
-                // Ensure your Jenkins job is configured to checkout the 'staging' branch,
-                // or explicitly specify it here if needed for multibranch pipelines.
-                // For a simple pipeline job, configuring the branch in the job UI is often enough.
-                checkout scm // This checks out based on the SCM configuration of the Jenkins job
+                git branch: 'feature/eks-deployment', url: 'https://github.com/Aayush786-21/netflix-.git'
             }
         }
 
@@ -34,7 +34,7 @@ pipeline {
             steps {
                 script {
                     if (params.TMDB_V3_API_KEY == null || params.TMDB_V3_API_KEY.trim().isEmpty()) {
-                        error "TMDB_V3_API_KEY parameter is required and cannot be empty for the Docker build."
+                        error "TMDB_V3_API_KEY parameter is required."
                     }
                     sh "docker build --build-arg TMDB_V3_API_KEY=${params.TMDB_V3_API_KEY} -t ${env.DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER} -t ${env.DOCKER_IMAGE_NAME}:latest ."
                 }
@@ -56,56 +56,71 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kind Kubernetes') {
+        stage('Deploy to EKS') {
             steps {
-                script {
-                    withCredentials([file(credentialsId: 'kind-netflix-cluster-kubeconfig', variable: 'KUBECONFIG_PATH')]) {
-                        echo "Applying Kubernetes manifests from ${env.K8S_DEPLOYMENT_FILE}..."
-                        sh "kubectl --kubeconfig $KUBECONFIG_PATH apply -f ${env.K8S_DEPLOYMENT_FILE} -n ${env.K8S_NAMESPACE}"
+                // Use 'withAWS' if Pipeline AWS Steps plugin is installed and configured
+                // This sets AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION etc.
+                // from the Jenkins credential.
+                withAWS(credentials: 'aws-eks-deploy-credentials', region: env.AWS_REGION) {
+                    script {
+                        // Kubeconfig file that Jenkins will use
+                        def kubeconfigFilePath = "${env.WORKSPACE}/eks_kubeconfig"
+
+                        echo "Updating kubeconfig for EKS cluster: ${env.EKS_CLUSTER_NAME} in region ${env.AWS_REGION}"
+                        // This command uses the AWS credentials (from withAWS) to fetch/update the kubeconfig
+                        // and writes it to a temporary file in the workspace.
+                        sh "aws eks update-kubeconfig --name ${env.EKS_CLUSTER_NAME} --region ${env.AWS_REGION} --kubeconfig ${kubeconfigFilePath}"
+
+                        echo "Applying Kubernetes manifests to EKS..."
+                        // Apply Secret (ensure it's created in EKS, e.g. manually or via another pipeline step)
+                        // Example: Creating/Updating the secret if defined in a YAML file
+                        // sh "kubectl --kubeconfig ${kubeconfigFilePath} apply -f k8s/netflix-clone-secret.yaml -n ${env.K8S_NAMESPACE}"
+                        // Or ensure it's created manually in EKS before this pipeline runs.
                         
-                        echo "Waiting for deployment rollout of ${env.DEPLOYMENT_NAME}..."
-                        sh "kubectl --kubeconfig $KUBECONFIG_PATH rollout status deployment/${env.DEPLOYMENT_NAME} -n ${env.K8S_NAMESPACE} --timeout=180s"
+                        sh "kubectl --kubeconfig ${kubeconfigFilePath} apply -f ${env.K8S_DEPLOYMENT_FILE} -n ${env.K8S_NAMESPACE}"
+                        sh "kubectl --kubeconfig ${kubeconfigFilePath} apply -f ${env.K8S_INGRESS_FILE} -n ${env.K8S_NAMESPACE}"
                         
-                        echo "Deployment status:"
-                        sh "kubectl --kubeconfig $KUBECONFIG_PATH get deployment ${env.DEPLOYMENT_NAME} -n ${env.K8S_NAMESPACE} -o wide"
+                        echo "Waiting for deployment rollout on EKS..."
+                        sh "kubectl --kubeconfig ${kubeconfigFilePath} rollout status deployment/${env.DEPLOYMENT_NAME} -n ${env.K8S_NAMESPACE} --timeout=300s"
                         
-                        echo "Pod status:"
-                        sh "kubectl --kubeconfig $KUBECONFIG_PATH get pods -n ${env.K8S_NAMESPACE} -l ${env.APP_LABEL} -o wide"
+                        echo "EKS Deployment status:"
+                        sh "kubectl --kubeconfig ${kubeconfigFilePath} get deployment ${env.DEPLOYMENT_NAME} -n ${env.K8S_NAMESPACE} -o wide"
                         
-                        echo "Service status:"
-                        sh "kubectl --kubeconfig $KUBECONFIG_PATH get svc ${env.SERVICE_NAME} -n ${env.K8S_NAMESPACE}"
+                        echo "EKS Pod status:"
+                        sh "kubectl --kubeconfig ${kubeconfigFilePath} get pods -n ${env.K8S_NAMESPACE} -l ${env.APP_LABEL} -o wide"
+                        
+                        echo "EKS Service status:"
+                        sh "kubectl --kubeconfig ${kubeconfigFilePath} get svc ${env.DEPLOYMENT_NAME}-svc -n ${env.K8S_NAMESPACE}"
+                        
+                        echo "EKS Ingress status (waiting for ALB DNS name...):"
+                        // It can take a few minutes for the ALB to be provisioned and the DNS name to appear
+                        sh "kubectl --kubeconfig ${kubeconfigFilePath} get ingress ${env.INGRESS_NAME} -n ${env.K8S_NAMESPACE} -o wide"
+                        echo "Note: The ALB DNS name might take 5-10 minutes to become fully available and propagate."
                     }
                 }
             }
         }
-    } // End of stages
+    }
 
     post {
         always {
             echo 'Pipeline finished.'
-            // Logout from Docker Hub if logged in
             sh 'docker logout || true'
-
-            // Clean up local Docker images on the agent
             script {
                 try {
                     sh "docker rmi ${env.DOCKER_IMAGE_NAME}:${env.BUILD_NUMBER} || true"
-                    // Be cautious with removing ':latest' if it's actively used or if another build might need it quickly.
-                    // For this CI setup, it's generally okay as we retag latest each time.
                     sh "docker rmi ${env.DOCKER_IMAGE_NAME}:latest || true"
                 } catch (err) {
-                    echo "Warning: Failed to remove local docker images: ${err.getMessage()}"
+                    echo "Failed to remove local docker images: ${err}"
                 }
             }
-            deleteDir() // Clean up workspace again
+            deleteDir()
         }
         success {
-            echo 'Pipeline succeeded!'
-            // You can add notification steps here (e.g., email, Slack)
+            echo 'EKS Pipeline succeeded!'
         }
         failure {
-            echo 'Pipeline failed!'
-            // You can add notification steps here
+            echo 'EKS Pipeline failed!'
         }
     }
 }

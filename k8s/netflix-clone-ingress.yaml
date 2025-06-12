@@ -1,17 +1,48 @@
+# k8s/netflix-clone-ingress.yaml (for EKS with AWS Load Balancer Controller)
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: netflix-clone-ingress
-  namespace: default 
+  name: netflix-clone-ingress # Name of your Ingress resource
+  namespace: default # Or the namespace where your netflix-clone-svc is deployed
+  annotations:
+    # Use 'alb' as the IngressClass for AWS Load Balancer Controller v2.x
+    # For older versions, it might be kubernetes.io/ingress.class: alb
+    kubernetes.io/ingress.class: alb
+    # Scheme: internet-facing (public) or internal
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # Target Type: 'ip' to route to Pod IPs, 'instance' to route to NodePort on instances
+    # 'ip' mode is generally recommended for performance and features.
+    alb.ingress.kubernetes.io/target-type: ip
+    # Health Check Path for the target group (should be a valid path in your app that returns 200 OK)
+    # If your app's root ("/") returns 200 OK when healthy, this is fine.
+    # alb.ingress.kubernetes.io/healthcheck-path: /
+    # Optional: Define subnets for the ALB if you want to restrict it (requires subnet IDs or tags)
+    # alb.ingress.kubernetes.io/subnets: subnet-xxxxxxxxxxxxxxxxx, subnet-yyyyyyyyyyyyyyyyy
+    # Optional: SSL/TLS - if you have a certificate in AWS Certificate Manager (ACM)
+    # alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS":443}]'
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:your-region:your-account-id:certificate/your-cert-id
+    # alb.ingress.kubernetes.io/ssl-redirect: '443' # Redirect HTTP to HTTPS
 spec:
-  ingressClassName: nginx
+  # ingressClassName: alb # For K8s 1.19+ and recent ALB controller versions, this is preferred over annotation
   rules:
+  # You can define a host if you have a domain name configured in Route 53 pointing to the ALB.
+  # - host: netflix.yourdomain.com
+  #   http:
+  #     paths:
+  #     - path: /
+  #       pathType: Prefix
+  #       backend:
+  #         service:
+  #           name: netflix-clone-svc
+  #           port:
+  #             number: 80
+  # If no host is specified, the ALB will respond to requests sent to its DNS name.
   - http:
       paths:
       - path: / # Route all traffic from the root path
-        pathType: Prefix # Or ImplementationSpecific or Exact
+        pathType: Prefix # Or ImplementationSpecific
         backend:
           service:
-            name: netflix-clone-svc # Name of your Service
+            name: netflix-clone-svc # Name of your application's Service
             port:
-              number: 80 # Port number of your Service
+              number: 80 # Port number exposed by your netflix-clone-svc

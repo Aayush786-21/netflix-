@@ -1,11 +1,13 @@
+# k8s/netflix-clone-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: netflix-clone
+  namespace: default # Assuming deployment in default namespace
   labels:
     app: netflix-clone
 spec:
-  replicas: 1
+  replicas: 1 # Start with 1, can be scaled by Jenkins or kubectl
   selector:
     matchLabels:
       app: netflix-clone
@@ -16,20 +18,16 @@ spec:
     spec:
       containers:
       - name: netflix-clone-app
-        image: aayush786/netflix-clone:latest 
+        image: aayush786/netflix-clone:latest # YOUR DOCKER HUB IMAGE
         ports:
-        - containerPort: 80 # The port Nginx listens on inside the container
+        - containerPort: 80 # Port Nginx listens on inside the container
         env:
-        - name: VITE_APP_TMDB_V3_API_KEY # This is the env var name INSIDE your container.
-                                        # Your app code (JS) needs to look for this exact name if it uses runtime env vars.
-                                        # If Vite baked in VITE_TMDB_V3_API_KEY (without _APP_) during build,
-                                        # then this runtime env var might not be used by the static files,
-                                        # but it's good to be consistent with the secret.
+        - name: VITE_APP_TMDB_V3_API_KEY # Or VITE_TMDB_V3_API_KEY if your app uses that
           valueFrom:
             secretKeyRef:
-              name: netflix-clone-secret     # This MUST match the name of the K8s Secret you created.
-              key: VITE_APP_TMDB_V3_API_KEY  # This MUST match the key within that K8s Secret.
-        resources: # Optional: define resource requests and limits
+              name: netflix-clone-secret # Name of the K8s Secret
+              key: VITE_APP_TMDB_V3_API_KEY # Key within the K8s Secret (ensure this matches your secret)
+        resources:
           requests:
             memory: "64Mi"
             cpu: "100m"
@@ -41,14 +39,15 @@ apiVersion: v1
 kind: Service
 metadata:
   name: netflix-clone-svc
+  namespace: default # Assuming service in default namespace
   labels:
     app: netflix-clone
 spec:
   selector:
-    app: netflix-clone # This must match the labels on your Pods (template.metadata.labels)
+    app: netflix-clone
   ports:
   - protocol: TCP
-    port: 80       # Service's port within the cluster (how other pods reach it)
-    targetPort: 80 # Port on your container (containerPort)
-  type: NodePort    # Exposes the service on each Kind node's IP at a high port.
-                    
+    port: 80       # Service's port within the cluster
+    targetPort: 80 # Port on the pod/container
+  type: ClusterIP   # Changed to ClusterIP, suitable for ALB with target-type: ip
+                    # If you were using target-type: instance, NodePort would be needed.
